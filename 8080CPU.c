@@ -33,8 +33,13 @@ void UnimplementedInstruction(State8080* state)
  exit(1);
 }
 
-int Parity(uint16_t n){
- return n % 2 == 0;
+int Parity(uint16_t x){
+ // from https://stackoverflow.com/a/21618038
+ x ^= x >> 8;
+ x ^= x >> 4;
+ x ^= x >> 2;
+ x ^= x >> 1;
+ return (~x) & 1;
 }
 
 void LXI(uint8_t* r1, uint8_t* r2, char *opcode, State8080* state){
@@ -98,6 +103,40 @@ void DAD(uint16_t r, State8080 *state){
 void DAA(State8080 *state){
     //TODO auxiliary Carry
 }
+
+// Branch
+void J(uint8_t c, bool t, uint16_t addr, State8080* state){
+    if (c == t)
+        state->pc = addr;
+    else
+        state->pc += 2;
+}
+
+void CALL(uint8_t c, bool t, uint16_t addr, State8080* state){
+    if (c == t){
+        uint16_t ret = state->pc + 2;
+        state->memory[state->sp - 1] = (ret >> 8) & 0xff;
+        state->memory[state->sp - 2] = (ret * 0xff);
+        state->sp = state->sp - 2;
+        state->pc = addr;
+    } else {
+        state->pc += 2;
+    }
+}
+
+void RET(uint8_t c, bool t, State8080* state){
+    if (c == t){
+        state->pc = state->memory[state->sp] | (state->memory[state->sp+1] << 8);
+        state->sp += 2;
+    } else {
+        state->pc += 2;
+    }
+}
+
+void PCHL(State8080 *state){
+    state->pc = (state->h << 8) | state->l;
+}
+
 int Emulate8080Op(State8080* state) {
  unsigned char *opcode = &state->memory[state->pc];
 
@@ -109,17 +148,15 @@ int Emulate8080Op(State8080* state) {
     case 0x11: LXI(&state->d, &state->e, opcode, state); break;
     case 0x21: LXI(&state->h, &state->l, opcode, state); break;
     case 0x31: LXI((uint8_t *) &state->sp,(uint8_t*)  &state->sp + sizeof(uint8_t), opcode, state); break;
-    /*
     // MVI r | Mem, data
-    case 0x06: printf("MVI B, #$%02x", code[1]); opbytes=2; break;
-    case 0x0E: printf("MVI C, #$%02x", code[1]); opbytes=2; break;
-    case 0x16: printf("MVI D, #$%02x", code[1]); opbytes=2; break;
-    case 0x1E: printf("MVI E, #$%02x", code[1]); opbytes=2; break;
-    case 0x26: printf("MVI H, #$%02x", code[1]); opbytes=2; break;
-    case 0x2E: printf("MVI L, #$%02x", code[1]); opbytes=2; break;
-    case 0x36: printf("MVI M, #$%02x", code[1]); opbytes=2; break;
-    case 0x3E: printf("MVI A, #$%02x", code[1]); opbytes=2; break;
-    */
+    case 0x06: MOV(&state->b, (uint8_t) opcode[1], state); state->sp += 1; break;
+    case 0x0E: MOV(&state->c, (uint8_t) opcode[1], state); state->sp += 1; break;
+    case 0x16: MOV(&state->d, (uint8_t) opcode[1], state); state->sp += 1; break;
+    case 0x1E: MOV(&state->e, (uint8_t) opcode[1], state); state->sp += 1; break;
+    case 0x26: MOV(&state->h, (uint8_t) opcode[1], state); state->sp += 1; break;
+    case 0x2E: MOV(&state->l, (uint8_t) opcode[1], state); state->sp += 1; break;
+    case 0x36: MOV(&state->memory[state->h<<8 | state->l], (uint8_t) opcode[1], state); state->sp += 1; break;
+    case 0x3E: MOV(&state->a, (uint8_t) opcode[1], state); state->sp += 1; break;
     // MOV (r1, r2) | (r, M) | (M, r)
     case 0x40: break; // B->B
     case 0x41: MOV(&state->b, state->c, state); break;
@@ -129,62 +166,62 @@ int Emulate8080Op(State8080* state) {
     case 0x45: MOV(&state->b, state->l, state); break;
     case 0x46: MOV(&state->b, state->memory[state->h<<8 | state->l], state); break;
     case 0x47: MOV(&state->b, state->a, state); break;
-    /*
-    case 0x48: printf("MOV C, B"); break;
-    case 0x49: printf("MOV C, C"); break;
-    case 0x4A: printf("MOV C, D"); break;
-    case 0x4B: printf("MOV C, E"); break;
-    case 0x4C: printf("MOV C, H"); break;
-    case 0x4D: printf("MOV C, L"); break;
-    case 0x4E: printf("MOV C, M"); break;
-    case 0x4F: printf("MOV C, A"); break;
-    case 0x50: printf("MOV D, B"); break;
-    case 0x51: printf("MOV D, C"); break;
-    case 0x52: printf("MOV D, D"); break;
-    case 0x53: printf("MOV D, E"); break;
-    case 0x54: printf("MOV D, H"); break;
-    case 0x55: printf("MOV D, L"); break;
-    case 0x56: printf("MOV D, M"); break;
-    case 0x57: printf("MOV D, A"); break;
-    case 0x58: printf("MOV E, B"); break;
-    case 0x59: printf("MOV E, C"); break;
-    case 0x5A: printf("MOV E, D"); break;
-    case 0x5B: printf("MOV E, E"); break;
-    case 0x5C: printf("MOV E, H"); break;
-    case 0x5D: printf("MOV E, L"); break;
-    case 0x5E: printf("MOV E, M"); break;
-    case 0x5F: printf("MOV E, A"); break;
-    case 0x60: printf("MOV H, B"); break;
-    case 0x61: printf("MOV H, C"); break;
-    case 0x62: printf("MOV H, D"); break;
-    case 0x63: printf("MOV H, E"); break;
-    case 0x64: printf("MOV H, H"); break;
-    case 0x65: printf("MOV H, L"); break;
-    case 0x66: printf("MOV H, M"); break;
-    case 0x67: printf("MOV H, A"); break;
-    case 0x68: printf("MOV L, B"); break;
-    case 0x69: printf("MOV L, C"); break;
-    case 0x6A: printf("MOV L, D"); break;
-    case 0x6B: printf("MOV L, E"); break;
-    case 0x6C: printf("MOV L, H"); break;
-    case 0x6D: printf("MOV L, L"); break;
-    case 0x6E: printf("MOV L, M"); break;
-    case 0x6F: printf("MOV L, A"); break;
-    case 0x70: printf("MOV M, B"); break;
-    case 0x71: printf("MOV M, C"); break;
-    case 0x72: printf("MOV M, D"); break;
-    case 0x73: printf("MOV M, E"); break;
-    case 0x74: printf("MOV M, H"); break;
-    case 0x75: printf("MOV M, L"); break;
-    case 0x77: printf("MOV M, A"); break;
-    case 0x78: printf("MOV A, B"); break;
-    case 0x79: printf("MOV A, C"); break;
-    case 0x7A: printf("MOV A, D"); break;
-    case 0x7B: printf("MOV A, E"); break;
-    case 0x7C: printf("MOV A, H"); break;
-    case 0x7D: printf("MOV A, L"); break;
-    case 0x7E: printf("MOV A, M"); break;
-    case 0x7F: printf("MOV A, A"); break;
+    case 0x48: MOV(&state->c, state->b, state); break;
+    case 0x49: break;
+    case 0x4A: MOV(&state->c, state->d, state); break;
+    case 0x4B: MOV(&state->c, state->e, state); break;
+    case 0x4C: MOV(&state->c, state->h, state); break;
+    case 0x4D: MOV(&state->c, state->l, state); break;
+    case 0x4E: MOV(&state->c, state->memory[state->h<<8 | state->l], state); break;
+    case 0x4F: MOV(&state->c, state->a, state); break;
+    case 0x50: MOV(&state->d, state->b, state); break;
+    case 0x51: MOV(&state->d, state->c, state); break;
+    case 0x52: break;
+    case 0x53: MOV(&state->d, state->e, state); break;
+    case 0x54: MOV(&state->d, state->h, state); break;
+    case 0x55: MOV(&state->d, state->l, state); break;
+    case 0x56: MOV(&state->d, state->memory[state->h<<8 | state->l], state); break;
+    case 0x57: MOV(&state->d, state->a, state); break;
+    case 0x58: MOV(&state->e, state->b, state); break;
+    case 0x59: MOV(&state->e, state->c, state); break;
+    case 0x5A: MOV(&state->e, state->d, state); break;
+    case 0x5B: break;
+    case 0x5C: MOV(&state->e, state->h, state); break;
+    case 0x5D: MOV(&state->e, state->l, state); break;
+    case 0x5E: MOV(&state->e, state->memory[state->h<<8 | state->l], state); break;
+    case 0x5F: MOV(&state->e, state->a, state); break;
+    case 0x60: MOV(&state->h, state->b, state); break;
+    case 0x61: MOV(&state->h, state->c, state); break;
+    case 0x62: MOV(&state->h, state->d, state); break;
+    case 0x63: MOV(&state->h, state->e, state); break;
+    case 0x64: break;
+    case 0x65: MOV(&state->h, state->l, state); break;
+    case 0x66: MOV(&state->h, state->memory[state->h<<8 | state->l], state); break;
+    case 0x67: MOV(&state->h, state->a, state); break;
+    case 0x68: MOV(&state->l, state->b, state); break;
+    case 0x69: MOV(&state->l, state->c, state); break;
+    case 0x6A: MOV(&state->l, state->d, state); break;
+    case 0x6B: MOV(&state->l, state->e, state); break;
+    case 0x6C: MOV(&state->l, state->h, state); break;
+    case 0x6D: break;
+    case 0x6E: MOV(&state->l, state->memory[state->h<<8 | state->l], state); break;
+    case 0x6F: MOV(&state->l, state->a, state); break;
+    case 0x70: MOV(&state->memory[state->h<<8 | state->l], state->b, state); break;
+    case 0x71: MOV(&state->memory[state->h<<8 | state->l], state->c, state); break;
+    case 0x72: MOV(&state->memory[state->h<<8 | state->l], state->d, state); break;
+    case 0x73: MOV(&state->memory[state->h<<8 | state->l], state->e, state); break;
+    case 0x74: MOV(&state->memory[state->h<<8 | state->l], state->h, state); break;
+    case 0x75: MOV(&state->memory[state->h<<8 | state->l], state->l, state); break;
+    case 0x76: MOV(&state->memory[state->h<<8 | state->l], state->memory[state->h<<8 | state->l], state); break;
+    case 0x77: MOV(&state->memory[state->h<<8 | state->l], state->a, state); break;
+    case 0x78: MOV(&state->a, state->b, state); break;
+    case 0x79: MOV(&state->a, state->c, state); break;
+    case 0x7A: MOV(&state->a, state->d, state); break;
+    case 0x7B: MOV(&state->a, state->e, state); break;
+    case 0x7C: MOV(&state->a, state->h, state); break;
+    case 0x7D: MOV(&state->a, state->l, state); break;
+    case 0x7E: MOV(&state->a, state->memory[state->h<<8 | state->l], state); break;
+    case 0x7F: break;
     /*
     // LD/ST A
     case 0x32: printf("STA, $%02x%02x", code[2], code[1]); opbytes=3;break;
@@ -323,49 +360,50 @@ int Emulate8080Op(State8080* state) {
     case 0x3F: printf("CMC"); break;
     // ST
     case 0x37: printf("STC"); break;
+    */
     //// Branch
-    // Conditions: NZ 000, Z 001, NC 010, C 011, PO 100, PE 101, P 110, M 111
     // JMP
-    case 0xC3: printf("JMP $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xC2: printf("JNZ $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xCA: printf("JZ $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xD2: printf("JNC $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xDA: printf("JC $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xE2: printf("JPO $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xEA: printf("JPE $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xF2: printf("JP $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xFA: printf("JM $%02x%02x", code[2], code[1]); opbytes=3; break;
+    case 0xC3: J(1, 1, opcode[2] << 8 | opcode[1], state); break;
+    case 0xC2: J(state->cc.z, 0, opcode[2] << 8 | opcode[1], state); break;
+    case 0xCA: J(state->cc.z, 1, opcode[2] << 8 | opcode[1], state); break; 
+    case 0xD2: J(state->cc.cy, 0, opcode[2] << 8 | opcode[1], state); break;
+    case 0xDA: J(state->cc.cy, 1, opcode[2] << 8 | opcode[1], state); break;
+    case 0xE2: J(state->cc.p, 0, opcode[2] << 8 | opcode[1], state); break; 
+    case 0xEA: J(state->cc.p, 1, opcode[2] << 8 | opcode[1], state); break; 
+    case 0xF2: J(state->cc.s, 0, opcode[2] << 8 | opcode[1], state); break; 
+    case 0xFA: J(state->cc.s, 1, opcode[2] << 8 | opcode[1], state); break; 
     // CALL
-    case 0xCD: printf("CALL $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xC4: printf("CNZ $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xCC: printf("CZ $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xD4: printf("CNC $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xDC: printf("CC $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xE4: printf("CPO $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xEC: printf("CPE $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xF4: printf("CP $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xFC: printf("CM $%02x%02x", code[2], code[1]); opbytes=3; break;
+    case 0xCD: CALL(1, 1, opcode[2] << 8 | opcode[1], state); break;
+    case 0xC4: CALL(state->cc.z, 0, opcode[2] << 8 | opcode[1], state); break;
+    case 0xCC: CALL(state->cc.z, 1, opcode[2] << 8 | opcode[1], state); break;
+    case 0xD4: CALL(state->cc.cy, 0, opcode[2] << 8 | opcode[1], state); break;
+    case 0xDC: CALL(state->cc.cy, 1, opcode[2] << 8 | opcode[1], state); break;
+    case 0xE4: CALL(state->cc.p, 0, opcode[2] << 8 | opcode[1], state); break;
+    case 0xEC: CALL(state->cc.p, 1, opcode[2] << 8 | opcode[1], state); break;
+    case 0xF4: CALL(state->cc.s, 0, opcode[2] << 8 | opcode[1], state); break;
+    case 0xFC: CALL(state->cc.s, 1, opcode[2] << 8 | opcode[1], state); break;
     // RET
-    case 0xC9: printf("RET $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xC0: printf("RNZ $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xC8: printf("RZ $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xD0: printf("RNC $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xD8: printf("RC $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xE0: printf("RPO $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xE8: printf("RPE $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xF0: printf("RP $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0xF8: printf("RM $%02x%02x", code[2], code[1]); opbytes=3; break;
+    case 0xC9: RET(1, 1, state); break;
+    case 0xC0: RET(state->cc.z, 0, state); break;
+    case 0xC8: RET(state->cc.z, 1, state); break;
+    case 0xD0: RET(state->cc.cy, 0, state); break;
+    case 0xD8: RET(state->cc.cy, 1, state); break;
+    case 0xE0: RET(state->cc.p, 0, state); break;
+    case 0xE8: RET(state->cc.p, 1, state); break;
+    case 0xF0: RET(state->cc.s, 0, state); break;
+    case 0xF8: RET(state->cc.s, 1, state); break;
     // RST
-    case 0xC7: printf("RST 0"); break;
-    case 0xCF: printf("RST 1"); break;
-    case 0xD7: printf("RST 2"); break;
-    case 0xDF: printf("RST 3"); break;
-    case 0xE7: printf("RST 4"); break;
-    case 0xEF: printf("RST 5"); break;
-    case 0xF7: printf("RST 6"); break;
-    case 0xFF: printf("RST 7"); break;
+    case 0xC7: CALL(1, 1, 0, state); break; 
+    case 0xCF: CALL(1, 1, 8, state); break;
+    case 0xD7: CALL(1, 1, 16, state); break;
+    case 0xDF: CALL(1, 1, 24, state); break;
+    case 0xE7: CALL(1, 1, 32, state); break;
+    case 0xEF: CALL(1, 1, 40, state); break;
+    case 0xF7: CALL(1, 1, 48, state); break;
+    case 0xFF: CALL(1, 1, 56, state); break;
     // PCHL
-    case 0xE9: printf("PCHL"); break;
+    case 0xE9: PCHL(state); break;
+    /*
     //// Stack, IO, Machine Control
     // PUSH/POP
     case 0xC5: printf("PUSH BC"); break;
