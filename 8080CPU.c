@@ -1,21 +1,115 @@
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <stdbool.h>
 
+typedef struct ConditionCodes {
+ uint8_t z:1;
+ uint8_t s:1;
+ uint8_t p:1;
+ uint8_t cy:1;
+ uint8_t ac:1;
+ uint8_t pad:3;
+ } ConditionCodes;
 
-int Disassemble8080Op(unsigned char *codebuffer, int pc)
+typedef struct State8080 {
+ uint8_t a;
+ uint8_t b;
+ uint8_t c;
+ uint8_t d;
+ uint8_t e;
+ uint8_t h;
+ uint8_t l;
+ uint16_t sp;
+ uint16_t pc;
+ uint8_t * memory;
+ struct ConditionCodes cc;
+ uint8_t int_enable;
+} State8080;
+
+void UnimplementedInstruction(State8080* state)
 {
- unsigned char *code = &codebuffer[pc];
- int opbytes = 1;
- printf("%04x ", pc);
- switch(*code)
- {
-    case 0x00: printf("NOP"); break;
+ printf("Error: Unimplemented Instruction\n");
+ exit(1);
+}
+
+int Parity(uint16_t n){
+ return n % 2 == 0;
+}
+
+void LXI(uint8_t* r1, uint8_t* r2, char *opcode, State8080* state){
+ *r1 = opcode[2];
+ *r2 = opcode[1];
+ state->pc += 2;
+}
+
+void MOV(uint8_t* r1, uint8_t val, State8080* state){
+ *r1 = val;
+}
+
+void ADD(uint8_t r, bool carry, State8080 *state){
+    uint16_t answer = (uint16_t) state->a + (uint16_t) r + carry ? state->cc.cy : 0;
+    state->cc.z = ((answer & 0xff) == 0);
+    state->cc.s = ((answer & 0x80) != 0);
+    state->cc.cy = (answer > 0xff);
+    state->cc.p = Parity(answer & 0xff);
+    state->a = answer & 0xff;
+}
+
+void SUB(uint8_t r, bool carry, State8080 *state){
+    uint16_t answer = (uint16_t) state->a - (uint16_t) r - carry ? state->cc.cy: 0;
+    state->cc.z = ((answer & 0xff) == 0);
+    state->cc.s = ((answer & 0x80) != 0);
+    state->cc.cy = (answer > 0xff);
+    state->cc.p = Parity(answer & 0xff);
+    state->a = answer & 0xff;
+}
+
+void INC(uint8_t* r, State8080 *state){
+    uint16_t answer = (uint16_t) *r + 1;
+    state->cc.z = ((answer & 0xff) == 0);
+    state->cc.s = ((answer & 0x80) != 0);
+    state->cc.p = Parity(answer & 0xff);
+    *r = answer & 0xff;
+}
+
+void DCR(uint8_t* r, State8080 *state){
+    uint16_t answer = (uint16_t) *r - 1;
+    *r = answer & 0xff;
+}
+
+void INX(uint16_t* r, State8080 *state){
+    uint32_t answer = (uint32_t) *r + 1;
+    *r = answer & 0xffff;
+}
+
+void DCX(uint16_t* r, State8080 *state){
+    uint32_t answer = (uint32_t) *r - 1;
+    *r = answer & 0xffff;
+}
+
+void DAD(uint16_t r, State8080 *state){
+    uint32_t answer = (state->h << 8 | state->l) + r;
+    state->cc.cy = answer > 0xffff;
+    state->h = answer >> 8;
+    state->l = answer & 0xff;
+}
+
+void DAA(State8080 *state){
+    //TODO auxiliary Carry
+}
+int Emulate8080Op(State8080* state) {
+ unsigned char *opcode = &state->memory[state->pc];
+
+ switch(*opcode) {
+    case 0x00: break; // NOP
     //// Data Transfer
     //LXI rp, data
-    case 0x01: printf("LXI BC, #$%02x%02x", code[2], code[1]); opbytes=3;break;
-    case 0x11: printf("LXI DE, #$%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0x21: printf("LXI HL, #$%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0x31: printf("LXI SP, #$%02x%02x", code[2], code[1]); opbytes=3; break;
+    case 0x01: LXI(&state->b, &state->c, opcode, state); break;
+    case 0x11: LXI(&state->d, &state->e, opcode, state); break;
+    case 0x21: LXI(&state->h, &state->l, opcode, state); break;
+    case 0x31: LXI((uint8_t *) &state->sp,(uint8_t*)  &state->sp + sizeof(uint8_t), opcode, state); break;
+    /*
     // MVI r | Mem, data
     case 0x06: printf("MVI B, #$%02x", code[1]); opbytes=2; break;
     case 0x0E: printf("MVI C, #$%02x", code[1]); opbytes=2; break;
@@ -25,15 +119,17 @@ int Disassemble8080Op(unsigned char *codebuffer, int pc)
     case 0x2E: printf("MVI L, #$%02x", code[1]); opbytes=2; break;
     case 0x36: printf("MVI M, #$%02x", code[1]); opbytes=2; break;
     case 0x3E: printf("MVI A, #$%02x", code[1]); opbytes=2; break;
+    */
     // MOV (r1, r2) | (r, M) | (M, r)
-    case 0x40: printf("MOV B, B"); break;
-    case 0x41: printf("MOV B, C"); break;
-    case 0x42: printf("MOV B, D"); break;
-    case 0x43: printf("MOV B, E"); break;
-    case 0x44: printf("MOV B, H"); break;
-    case 0x45: printf("MOV B, L"); break;
-    case 0x46: printf("MOV B, M"); break;
-    case 0x47: printf("MOV B, A"); break;
+    case 0x40: break; // B->B
+    case 0x41: MOV(&state->b, state->c, state); break;
+    case 0x42: MOV(&state->b, state->d, state); break;
+    case 0x43: MOV(&state->b, state->e, state); break;
+    case 0x44: MOV(&state->b, state->h, state); break;
+    case 0x45: MOV(&state->b, state->l, state); break;
+    case 0x46: MOV(&state->b, state->memory[state->h<<8 | state->l], state); break;
+    case 0x47: MOV(&state->b, state->a, state); break;
+    /*
     case 0x48: printf("MOV C, B"); break;
     case 0x49: printf("MOV C, C"); break;
     case 0x4A: printf("MOV C, D"); break;
@@ -89,7 +185,7 @@ int Disassemble8080Op(unsigned char *codebuffer, int pc)
     case 0x7D: printf("MOV A, L"); break;
     case 0x7E: printf("MOV A, M"); break;
     case 0x7F: printf("MOV A, A"); break;
-
+    /*
     // LD/ST A
     case 0x32: printf("STA, $%02x%02x", code[2], code[1]); opbytes=3;break;
     case 0x3a: printf("LDA, $%02x%02x", code[2], code[1]); opbytes=3;break;
@@ -103,75 +199,78 @@ int Disassemble8080Op(unsigned char *codebuffer, int pc)
     case 0x1A: printf("LDAX DE"); break;
     // XCHG
     case 0xEB: printf("XCHG"); break;
+    */
     //// Arithmetic:
     // ADD
-    case 0x80: printf("ADD B"); break;
-    case 0x81: printf("ADD C"); break;
-    case 0x82: printf("ADD D"); break;
-    case 0x83: printf("ADD E"); break;
-    case 0x84: printf("ADD H"); break;
-    case 0x85: printf("ADD L"); break;
-    case 0x86: printf("ADD M"); break;
-    case 0x87: printf("ADD A"); break;
-    case 0x88: printf("ADC B"); break;
-    case 0x89: printf("ADC C"); break;
-    case 0x8A: printf("ADC D"); break;
-    case 0x8B: printf("ADC E"); break;
-    case 0x8C: printf("ADC H"); break;
-    case 0x8D: printf("ADC L"); break;
-    case 0x8E: printf("ADC M"); break;
-    case 0x8F: printf("ADC A"); break;
-    case 0xC6: printf("ADI #$0x%02x", code[1]); opbytes=2; break;
-    case 0xCE: printf("ACI #$0x%02x", code[1]); opbytes=2; break;
+    case 0x80: ADD(state->b, false, state); break;
+    case 0x81: ADD(state->c, false, state); break;
+    case 0x82: ADD(state->d, false, state); break;
+    case 0x83: ADD(state->e, false, state); break;
+    case 0x84: ADD(state->h, false, state); break;
+    case 0x85: ADD(state->l, false, state); break;
+    case 0x86: ADD(state->memory[state->h << 8 | state->l], false, state); break;
+    case 0x87: ADD(state->a, false, state); break;
+    case 0x88: ADD(state->b, true, state); break;
+    case 0x89: ADD(state->c, true, state); break;
+    case 0x8A: ADD(state->d, true, state); break;
+    case 0x8B: ADD(state->e, true, state); break;
+    case 0x8C: ADD(state->h, true, state); break;
+    case 0x8D: ADD(state->l, true, state); break;
+    case 0x8E: ADD(state->memory[state->h << 8 | state->l], true, state); break;
+    case 0x8F: ADD(state->a, true, state); break;
+    case 0xC6: ADD((uint8_t) opcode[1], false, state); state->pc += 1; break; // ADDI
+    case 0xCE: ADD((uint8_t) opcode[1], true, state); state->pc += 1; break; // ADCI
     // SUB
-    case 0x90: printf("SUB B"); break;
-    case 0x91: printf("SUB C"); break;
-    case 0x92: printf("SUB D"); break;
-    case 0x93: printf("SUB E"); break;
-    case 0x94: printf("SUB H"); break;
-    case 0x95: printf("SUB L"); break;
-    case 0x96: printf("SUB M"); break;
-    case 0x97: printf("SUB A"); break;
-    case 0x98: printf("SBB B"); break;
-    case 0x99: printf("SBB C"); break;
-    case 0x9A: printf("SBB D"); break;
-    case 0x9B: printf("SBB E"); break;
-    case 0x9C: printf("SBB H"); break;
-    case 0x9D: printf("SBB L"); break;
-    case 0x9E: printf("SBB M"); break;
-    case 0x9F: printf("SBB A"); break;
-    case 0xD6: printf("SUI #0x%02x", code[1]); opbytes=2; break;
-    case 0xDE: printf("SBI #0x%02x", code[1]); opbytes=2; break;
+    case 0x90: SUB(state->b, false, state); break; 
+    case 0x91: SUB(state->c, false, state); break;
+    case 0x92: SUB(state->d, false, state); break;
+    case 0x93: SUB(state->e, false, state); break;
+    case 0x94: SUB(state->h, false, state); break;
+    case 0x95: SUB(state->l, false, state); break;
+    case 0x96: SUB(state->memory[state->h << 8 | state->l], false, state); break;
+    case 0x97: SUB(state->a, false, state); break;
+    case 0x98: SUB(state->b, true, state); break;
+    case 0x99: SUB(state->c, true, state); break;
+    case 0x9A: SUB(state->d, true, state); break;
+    case 0x9B: SUB(state->e, true, state); break;
+    case 0x9C: SUB(state->h, true, state); break;
+    case 0x9D: SUB(state->l, true, state); break;
+    case 0x9E: SUB(state->memory[state->h << 8 | state->l], true, state); break;
+    case 0x9F: SUB(state->b, true, state); break;
+    case 0xD6: SUB((uint8_t) opcode[1], false, state); state->pc += 1; break; 
+    case 0xDE: SUB((uint8_t) opcode[1], true, state); state->pc += 1; break;
     // IN/DC
-    case 0x04: printf("INR B"); break;
-    case 0x0C: printf("INR C"); break;
-    case 0x14: printf("INR D"); break;
-    case 0x1C: printf("INF E"); break;
-    case 0x24: printf("INR H"); break;
-    case 0x2C: printf("INR L"); break;
-    case 0x34: printf("INR M"); break;
-    case 0x3C: printf("INR A"); break;
-    case 0x05: printf("DCR B"); break;
-    case 0x0D: printf("DCR C"); break;
-    case 0x15: printf("DCR D"); break;
-    case 0x1D: printf("DCR E"); break;
-    case 0x25: printf("DCR H"); break;
-    case 0x2D: printf("DCR L"); break;
-    case 0x35: printf("DCR M"); break;
-    case 0x3D: printf("DCR A"); break;
-    case 0x03: printf("INX BC"); break;
-    case 0x13: printf("INX DE"); break;
-    case 0x23: printf("INX HL"); break;
-    case 0x33: printf("INX SP"); break;
-    case 0x0B: printf("DCX BC"); break;
-    case 0x1B: printf("DCX DE"); break;
-    case 0x2B: printf("DCX HL"); break;
-    case 0x3B: printf("DCX SP"); break;
-    case 0x09: printf("DAD BC"); break;
-    case 0x19: printf("DAD DE"); break;
-    case 0x29: printf("DAD HL"); break;
-    case 0x39: printf("DAD SP"); break;
-    case 0x27: printf("DAA"); break;
+    case 0x04: INC(&state->b, state);
+    case 0x0C: INC(&state->c, state);
+    case 0x14: INC(&state->d, state);
+    case 0x1C: INC(&state->e, state);
+    case 0x24: INC(&state->h, state);
+    case 0x2C: INC(&state->l, state);
+    case 0x34: INC(&state->memory[state->h << 8 | state->l], state);
+    case 0x3C: INC(&state->a, state);
+    case 0x05: DCR(&state->b, state);
+    case 0x0D: DCR(&state->c, state);
+    case 0x15: DCR(&state->d, state);
+    case 0x1D: DCR(&state->e, state);
+    case 0x25: DCR(&state->h, state);
+    case 0x2D: DCR(&state->l, state);
+    case 0x35: DCR(&state->memory[state->h << 8 | state->l], state);
+    case 0x3D: DCR(&state->a, state);
+    case 0x03: INX((uint16_t*) &state->b, state);
+    case 0x13: INX((uint16_t*) &state->d, state);
+    case 0x23: INX((uint16_t*) &state->h, state);
+    case 0x33: INX(&state->sp, state);
+    case 0x0B: DCX((uint16_t*) &state->b, state);
+    case 0x1B: DCX((uint16_t*) &state->b, state);
+    case 0x2B: DCX((uint16_t*) &state->b, state);
+    case 0x3B: DCX((uint16_t*) &state->b, state);
+    case 0x09: DAD(state->b << 8 | state->c, state);
+    case 0x19: DAD(state->d << 8 | state->e, state);
+    case 0x29: DAD(state->h << 8 | state->l, state);
+    case 0x39: DAD(state->sp, state);
+    //case 0x27: printf("DAA"); break;
+    //TODO: DAA
+    /*
 
     //// Logical
     // AN
@@ -285,33 +384,14 @@ int Disassemble8080Op(unsigned char *codebuffer, int pc)
     case 0xFB: printf("EI"); break;
     case 0xF3: printf("DI"); break;
     case 0x76: printf("HLT"); break;
-  }
+    */
+    default: UnimplementedInstruction(state);
+ }
 
-  printf("\n");
-  return opbytes;
+ state->pc+=1;
 }
 
-int main(int argc, char**argv){
- FILE *f= fopen(argv[1], "rb");
- if (f==NULL){
-    printf("error: Couldn't open %s\n", argv[1]);
-    exit(1);
- }
+int main(int argc, char *argv){
 
- fseek(f, 0L, SEEK_END);
- int fsize = ftell(f);
- fseek(f, 0L, SEEK_SET);
-
- unsigned char *buffer=malloc(fsize);
-
- fread(buffer, fsize, 1, f);
- fclose(f);
-
- int pc = 0;
-
- while (pc < fsize)
- {
-    pc += Disassemble8080Op(buffer, pc);
- }
  return 0;
 }
