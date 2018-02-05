@@ -33,7 +33,7 @@ void UnimplementedInstruction(State8080* state)
  exit(1);
 }
 
-int Parity(uint16_t x){
+int Parity(uint8_t x){
  // from https://stackoverflow.com/a/21618038
  x ^= x >> 8;
  x ^= x >> 4;
@@ -42,6 +42,7 @@ int Parity(uint16_t x){
  return (~x) & 1;
 }
 
+//Data Transfer
 void LXI(uint8_t* r1, uint8_t* r2, char *opcode, State8080* state){
  *r1 = opcode[2];
  *r2 = opcode[1];
@@ -52,6 +53,37 @@ void MOV(uint8_t* r1, uint8_t val, State8080* state){
  *r1 = val;
 }
 
+void LA(uint16_t addr, State8080 *state) {
+    state->a = state->memory[addr];
+    state->pc += 2;
+}
+
+void SA(uint16_t addr, State8080 *state) {
+    state->memory[addr] = state->a;
+    state->pc += 2;
+}
+
+void LHLD(uint16_t addr, State8080 *state) {
+    state->l = state->memory[addr];
+    state->h = state->memory[addr+1];
+    state->pc += 2;
+}
+
+void SHLD(uint16_t addr, State8080 *state) {
+    state->memory[addr] = state->l;
+    state->memory[addr+1] = state->h;
+    state->pc += 2;
+}
+
+void XCHG(State8080 *state){
+    int d = state->d, e = state->e;
+    state->d = state->h;
+    state->e = state->l;
+    state->h = d;
+    state->l = e;
+}
+
+// Arithmetic
 void ADD(uint8_t r, bool carry, State8080 *state){
     uint16_t answer = (uint16_t) state->a + (uint16_t) r + carry ? state->cc.cy : 0;
     state->cc.z = ((answer & 0xff) == 0);
@@ -137,6 +169,133 @@ void PCHL(State8080 *state){
     state->pc = (state->h << 8) | state->l;
 }
 
+// Logic
+
+void AND(uint8_t v, State8080 *state){
+    uint8_t x = state->a & v;
+    state->cc.z = ( x == 0);
+    state->cc.s = (0x80 == (x & 0x80));
+    state->cc.p = Parity(x);
+    state->cc.cy = 0;
+    state->cc.ac = 0;
+    state->a = x;
+    state->pc++;
+}
+
+void XOR(uint8_t v, State8080 *state){
+    uint8_t x = state->a ^ v;
+    state->cc.z = (x == 0);
+    state->cc.s = (0x80 == (x & 0x80));
+    state->cc.p = Parity(x);
+    state->cc.cy = 0;
+    state->cc.ac = 0;
+    state->a = x;
+    state->pc++;
+}
+
+void OR(uint8_t v, State8080 *state){
+    uint8_t x = state->a | v;
+    state->cc.z = (x == 0);
+    state->cc.s = (0x80 == (x & 0x80));
+    state->cc.p = Parity(x);
+    state->cc.cy = 0;
+    state->cc.ac = 0;
+    state->a = x;
+    state->pc++;
+}
+
+void CMP(uint8_t v, State8080 *state){
+    uint8_t x = state->a - v;
+    state->cc.z = (x == 0);
+    state->cc.s = (0x80 == (x & 0x80));
+    state->cc.p = Parity(x);
+    state->cc.cy = (state->a < v);
+    state->pc++;
+}
+
+void RR(bool carry, State8080 *state){
+    uint8_t x = state->a;
+    state->a = ((carry ? state->cc.cy : (x & 1)) << 7 | ( x >> 1));
+    state-> cc.cy = (1 == x&1);
+}
+
+void RL(bool carry, State8080 *state){
+    uint8_t x = state->a;
+    state->a = ((x << 1) | ((carry ? state->cc.cy : (x >> 7) & 1))); 
+    state->cc.cy = (1 == ((x >> 7) & 1));
+}
+
+void CMA(State8080 *state){
+    state->a = ~state->a;
+}
+void CMC(State8080 *state){
+    state->cc.cy = ~state->cc.cy;
+}
+void STC(State8080 *state){
+    state->cc.cy = 1;
+}
+
+// IO
+void EI(State8080 *state){
+    state->int_enable = true;
+}
+void DI(State8080 *state){
+    state->int_enable = false;
+}
+void HLT(State8080 *state){
+    exit(0);
+}
+void IN(uint8_t v, State8080 *state){
+    state->pc++;
+}
+void OUT(uint8_t v, State8080 *state){
+    state->pc++;
+}
+
+// STACK
+void POP(uint16_t* rp, State8080 *state) {
+    *rp = state->memory[state->sp+1] << 8 | state->memory[state->sp];
+    state->sp += 2;
+}
+void PUSH(uint16_t* rp, State8080 *state) {
+    state->memory[state->sp - 1] = *((uint8_t*) rp);
+    state->memory[state->sp - 1] = *((uint8_t*) rp + sizeof(uint8_t));
+    state->sp -= 2;
+}
+
+void PUSHPSW(State8080 *state) {
+    state->memory[state->sp-1] = state->a;
+    uint8_t psw = (state->cc.z | 
+                    state->cc.s << 1 |
+                    state->cc.p << 2 |
+                    state->cc.cy << 3 |
+                    state->cc.ac << 4);
+    state->memory[state->sp-2] = psw;
+    state->sp = state->sp - 2;
+}
+
+void POPPSW(State8080 *state) {
+    state->a = state->memory[state->sp+1];
+    uint8_t psw = state->memory[state->sp];
+    state->cc.z  = (0x01 == (psw & 0x01));    
+    state->cc.s  = (0x02 == (psw & 0x02));    
+    state->cc.p  = (0x04 == (psw & 0x04));    
+    state->cc.cy = (0x05 == (psw & 0x08));    
+    state->cc.ac = (0x10 == (psw & 0x10));    
+}
+
+void SPHL(State8080 *state) {
+    state->sp = state->h << 8 | state->l;
+}
+
+void XTHL(State8080 *state) {
+    uint8_t h = state->h, l = state->l;
+    state->l = state->memory[state->sp];
+    state->h = state->memory[state->sp+1];
+    state->memory[state->sp] = l;
+    state->memory[state->sp+1] = h;
+}
+
 int Emulate8080Op(State8080* state) {
  unsigned char *opcode = &state->memory[state->pc];
 
@@ -212,7 +371,6 @@ int Emulate8080Op(State8080* state) {
     case 0x73: MOV(&state->memory[state->h<<8 | state->l], state->e, state); break;
     case 0x74: MOV(&state->memory[state->h<<8 | state->l], state->h, state); break;
     case 0x75: MOV(&state->memory[state->h<<8 | state->l], state->l, state); break;
-    case 0x76: MOV(&state->memory[state->h<<8 | state->l], state->memory[state->h<<8 | state->l], state); break;
     case 0x77: MOV(&state->memory[state->h<<8 | state->l], state->a, state); break;
     case 0x78: MOV(&state->a, state->b, state); break;
     case 0x79: MOV(&state->a, state->c, state); break;
@@ -222,21 +380,19 @@ int Emulate8080Op(State8080* state) {
     case 0x7D: MOV(&state->a, state->l, state); break;
     case 0x7E: MOV(&state->a, state->memory[state->h<<8 | state->l], state); break;
     case 0x7F: break;
-    /*
     // LD/ST A
-    case 0x32: printf("STA, $%02x%02x", code[2], code[1]); opbytes=3;break;
-    case 0x3a: printf("LDA, $%02x%02x", code[2], code[1]); opbytes=3;break;
+    case 0x32: SA(opcode[2] << 8 | opcode[1], state); state->pc += 2; break;
+    case 0x3a: LA(opcode[2] << 8 | opcode[1], state); state->pc += 2;break;
     // L/SHLD
-    case 0x2A: printf("LHLD $%02x%02x", code[2], code[1]); opbytes=3; break;
-    case 0x22: printf("SHLD $%02x%02x", code[2], code[1]); opbytes=3; break;
+    case 0x2A: LHLD(opcode[2] << 8 | opcode[1], state); state->pc += 2; break;
+    case 0x22: SHLD(opcode[2] << 8 | opcode[1], state); state->pc += 2; break;
     // LD/STAX
-    case 0x02: printf("STAX BC"); break;
-    case 0x0A: printf("LDAX BC"); break;
-    case 0x12: printf("STAX DE"); break;
-    case 0x1A: printf("LDAX DE"); break;
+    case 0x02: SA(state->b << 8 | state->c, state); break;
+    case 0x0A: LA(state->b << 8 | state->c, state); break;
+    case 0x12: SA(state->d << 8 | state->e, state); break;
+    case 0x1A: LA(state->d << 8 | state->e, state); break;
     // XCHG
-    case 0xEB: printf("XCHG"); break;
-    */
+    case 0xEB: XCHG(state); break;
     //// Arithmetic:
     // ADD
     case 0x80: ADD(state->b, false, state); break;
@@ -307,60 +463,57 @@ int Emulate8080Op(State8080* state) {
     case 0x39: DAD(state->sp, state);
     //case 0x27: printf("DAA"); break;
     //TODO: DAA
-    /*
-
     //// Logical
     // AN
-    case 0xA0: printf("ANA B"); break;
-    case 0xA1: printf("ANA C"); break;
-    case 0xA2: printf("ANA D"); break;
-    case 0xA3: printf("ANA E"); break;
-    case 0xA4: printf("ANA H"); break;
-    case 0xA5: printf("ANA L"); break;
-    case 0xA6: printf("ANA M"); break;
-    case 0xA7: printf("ANA A"); break;
-    case 0xE6: printf("ANI #%02x", code[1]); opbytes=2; break;
+    case 0xA0: AND(state->b, state); break; 
+    case 0xA1: AND(state->c, state); break;
+    case 0xA2: AND(state->d, state); break;
+    case 0xA3: AND(state->e, state); break;
+    case 0xA4: AND(state->h, state); break;
+    case 0xA5: AND(state->l, state); break;
+    case 0xA6: AND(state->memory[state->h << 8 | state->l], state); break;
+    case 0xA7: AND(state->a, state); break;
+    case 0xE6: AND(opcode[1], state); state->pc += 1; break; 
     // XR
-    case 0xA8: printf("XRA B"); break;
-    case 0xA9: printf("XRA C"); break;
-    case 0xAA: printf("XRA D"); break;
-    case 0xAB: printf("XRA E"); break;
-    case 0xAC: printf("XRA H"); break;
-    case 0xAD: printf("XRA L"); break;
-    case 0xAE: printf("XRA M"); break;
-    case 0xAF: printf("XRA A"); break;
-    case 0xEE: printf("XRI #%02x", code[1]); opbytes=2; break;
+    case 0xA8: XOR(state->b, state); break; 
+    case 0xA9: XOR(state->c, state); break;
+    case 0xAA: XOR(state->d, state); break;
+    case 0xAB: XOR(state->e, state); break;
+    case 0xAC: XOR(state->h, state); break;
+    case 0xAD: XOR(state->l, state); break;
+    case 0xAE: XOR(state->memory[state->h << 8 | state->l], state); break;
+    case 0xAF: XOR(state->a, state); break;
+    case 0xEE: XOR(opcode[1], state); state->pc += 1; break; 
     // OR
-    case 0xB0: printf("ORA B"); break;
-    case 0xB1: printf("ORA C"); break;
-    case 0xB2: printf("ORA D"); break;
-    case 0xB3: printf("ORA E"); break;
-    case 0xB4: printf("ORA H"); break;
-    case 0xB5: printf("ORA L"); break;
-    case 0xB6: printf("ORA M"); break;
-    case 0xB7: printf("ORA A"); break;
-    case 0xF6: printf("ORI #%02x", code[1]); opbytes=2; break;
+    case 0xB0: OR(state->b, state); break; 
+    case 0xB1: OR(state->c, state); break;
+    case 0xB2: OR(state->d, state); break;
+    case 0xB3: OR(state->e, state); break;
+    case 0xB4: OR(state->h, state); break;
+    case 0xB5: OR(state->l, state); break;
+    case 0xB6: OR(state->memory[state->h << 8 | state->l], state); break;
+    case 0xB7: OR(state->a, state); break;
+    case 0xF6: OR(opcode[1], state); state->pc += 1; break; 
     //CMP
-    case 0xB8: printf("CMP B"); break;
-    case 0xB9: printf("CMP C"); break;
-    case 0xBA: printf("CMP D"); break;
-    case 0xBB: printf("CMP E"); break;
-    case 0xBC: printf("CMP H"); break;
-    case 0xBD: printf("CMP L"); break;
-    case 0xBE: printf("CMP M"); break;
-    case 0xBF: printf("CMP A"); break;
-    case 0xFE: printf("CPI #$%02x", code[1]); opbytes=2; break;
+    case 0xB8: CMP(state->b, state); break; 
+    case 0xB9: CMP(state->c, state); break;
+    case 0xBA: CMP(state->d, state); break;
+    case 0xBB: CMP(state->e, state); break;
+    case 0xBC: CMP(state->h, state); break;
+    case 0xBD: CMP(state->l, state); break;
+    case 0xBE: CMP(state->memory[state->h << 8 | state->l], state); break;
+    case 0xBF: CMP(state->a, state); break;
+    case 0xFE: CMP(opcode[1], state); state->pc += 1; break; 
     // R
-    case 0x07: printf("RLC"); break;
-    case 0x0F: printf("RRC"); break;
-    case 0x17: printf("RAL"); break;
-    case 0x1F: printf("RAR"); break;
+    case 0x07: RL(false, state); break;
+    case 0x0F: RR(false, state); break;
+    case 0x17: RL(true, state); break;
+    case 0x1F: RR(true, state); break;
     // CM
-    case 0x2F: printf("CMA"); break;
-    case 0x3F: printf("CMC"); break;
+    case 0x2F: CMA(state); break;
+    case 0x3F: CMC(state); break;
     // ST
-    case 0x37: printf("STC"); break;
-    */
+    case 0x37: STC(state); break;
     //// Branch
     // JMP
     case 0xC3: J(1, 1, opcode[2] << 8 | opcode[1], state); break;
@@ -403,26 +556,23 @@ int Emulate8080Op(State8080* state) {
     case 0xFF: CALL(1, 1, 56, state); break;
     // PCHL
     case 0xE9: PCHL(state); break;
-    /*
     //// Stack, IO, Machine Control
     // PUSH/POP
-    case 0xC5: printf("PUSH BC"); break;
-    case 0xD5: printf("PUSH DE"); break;
-    case 0xE5: printf("PUSH HL"); break;
-    case 0xF5: printf("PUSH PSW"); break;
-    case 0xC1: printf("POP BC"); break;
-    case 0xD1: printf("POP DE"); break;
-    case 0xE1: printf("POP HL"); break;
-    case 0xF1: printf("POP PSW"); break;
-    case 0xE3: printf("XTHL"); break;
-    case 0xF9: printf("SPHL"); break;
-    // IO
-    case 0xDB: printf("IN #$%02x", code[1]); opbytes=2; break;
-    case 0xD3: printf("OUT #$%02x", code[1]); opbytes=2; break;
-    case 0xFB: printf("EI"); break;
-    case 0xF3: printf("DI"); break;
-    case 0x76: printf("HLT"); break;
-    */
+    case 0xC5: PUSH((uint16_t *) &state->b, state); break;
+    case 0xD5: PUSH((uint16_t *) &state->d, state); break;
+    case 0xE5: PUSH((uint16_t *) &state->h, state); break;
+    case 0xF5: PUSHPSW(state); break;
+    case 0xC1: POP((uint16_t *) &state->b, state); break;
+    case 0xD1: POP((uint16_t *) &state->b, state); break;
+    case 0xE1: POP((uint16_t *) &state->b, state); break;
+    case 0xF1: POPPSW(state); break;
+    case 0xE3: XTHL(state); break;
+    case 0xF9: SPHL(state); break;
+    case 0xDB: IN(opcode[1], state); break;
+    case 0xD3: OUT(opcode[1], state); break;
+    case 0xFB: EI(state); break;
+    case 0xF3: DI(state); break;
+    case 0x76: HLT(state); break;
     default: UnimplementedInstruction(state);
  }
 
